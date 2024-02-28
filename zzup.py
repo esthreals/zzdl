@@ -1,47 +1,87 @@
-import urllib.request
 import os
+import urllib.request, urllib.parse
+import requests
+from multiprocessing import Pool
 
+
+
+def clean_dirname(name:str)->str:
+    name = name.strip()
+    illegal_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
+    for char in illegal_chars:
+        name = name.replace(char, '')
+    return name
+    
+
+def dl(url:str, name:str)->None:
+    r = requests.get(url, allow_redirects=True)
+    open(name, "wb").write(r.content)
+
+
+def download_collection(url:str, num_processes:int=6)->None:
+    url_base = '/'.join(url.split("/")[:-1])
+    url = url_base+"/index.html"
+    dir = clean_dirname(url.split("/")[4])
+    collection_page = scrape(url)
+    num_pages = int(collection_page.split("1 / ")[1].split(" ")[0])
+
+    for i in range(1, num_pages+1):
+        url = url_base + "/page-"+str(i)+".html"
+        collection_page = scrape(url)
+        collection_list = collection_page.split("<a target=\"_blank\" href=\"/content/")
+        for j in range(1, len(collection_list)):
+            gallery_page_url = "https://zzup.com/content/" + collection_list[j].split("\"")[0]
+            download_gallery(dir, gallery_page_url, num_processes)
+
+
+def download_gallery(dir:str, url:str, num_processes:int=6)->None:
+    url = '/'.join(url.split("/")[:-1])+"/index.html"
+    gallery_page = scrape(url)
+    gallery_name = gallery_page.split("<span style=\"font-weight: bold;font-size: 30px;\">")[1].split("<")[0]
+    gallery_name = clean_dirname(gallery_name)
+    total_dir = dir + "/" + gallery_name
+
+    if not os.path.isdir(dir):
+        os.mkdir(dir)
+    if not os.path.isdir(total_dir):
+        os.mkdir(total_dir)
+
+    image_page_url = "https://zzup.com/viewimage/" + gallery_page.split("href=\"/viewimage/")[1].split("\"")[0]
+    image_page = scrape(image_page_url)
+    num_images = int(image_page.split("1 | ")[1].split(" ")[0])
+    image_url = "https://zzup.com/" + image_page.split("<a href=\"/")[1].split("\"")[0]
+
+    print("Downloading gallery: \""+gallery_name+"\" - " + str(num_images) + " images")
+    pool = Pool(num_processes)
+    params = []
+    for i in range(1, num_images+1):
+        params.append([image_url.replace("image00001", "image"+str(str(i).zfill(5))), total_dir+"/"+str(i).zfill(4)+".jpg"])
+    pool.starmap(dl, params)
+
+
+def scrape(url:str, data:dict=None)->str:
+    if data != None:
+        data = urllib.parse.urlencode(data).encode()
+    user_agent = "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.0.7) Gecko/2009021910 Firefox/3.0.7"
+    headers = {"User-Agent": user_agent}
+    request = urllib.request.Request(url,data,headers)
+    response = urllib.request.urlopen(request)
+    data = response.read()
+    return str(data)
 
 
 def main():
-    url = input("Url of the gallery \(https://zzup.com/content/ABCDEFIJKLMN/Gallery_Name/ABCD/index.html):\n")
-    url = url.replace(url.split("/")[-1], "")  + "page-1.html"
-    gallery_name = url.split("/")[5]
-    print("\nGallery name:", gallery_name)
+    NUM_PROCESSES = 10
+    url = input("URL: ")
 
-    gallery_file = gallery_name + ".txt"
-    if os.path.isfile(gallery_file):
-        while True:
-            choice = input("The file " + str(gallery_file) + " already exists, do you want to overwrite it? (y=yes, n=no)")
-            if (choice == "y"):
-                break
-            elif (choice == "n"):
-                return
-            else:
-                print("Type either 'y' or 'n', try again")
-
-    request =  urllib.request.Request(url, 
-                                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:20.0) Gecko/20100101 Firefox/20.0'})
-    response = str(urllib.request.urlopen(request).read())
-
-    image_large_url = "https://zzup.com/viewimage/" + response.split("href=\"/viewimage/")[1].split("\"")[0]
-    num_images = int(image_large_url.split("-pics-")[1].split("-")[0])
-    print("Number of images:", num_images)
-
-    request_image =  urllib.request.Request(image_large_url, 
-                                            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:20.0) Gecko/20100101 Firefox/20.0'})
-    response_image = str(urllib.request.urlopen(request_image).read())
-
-    image_url = "https://zzup.com/" + response_image.split("<img src=\"")[2].split("\"")[0]
-    image_links = image_url + "\n"
-    for i in range(2, num_images+1):
-        image_links += image_url.replace("image00001", "image"+str(i).zfill(5)) + "\n"
-    
-    f = open(gallery_file, "w")
-    f.write(image_links)
-    f.close()
-
-    print("Image links are saved to the file '" + str(gallery_file) + "' in " + str(os.getcwd()))
+    # Categorize URL
+    if "https://zzup.com/search/" in url:
+        download_collection(url, NUM_PROCESSES)
+    elif "https://zzup.com/content/" in url:
+        dir = clean_dirname(input("Directory name:"))
+        download_gallery(dir, url, NUM_PROCESSES)
+    else:
+        print("Invalid URL. \nExamples: \nhttps://zzup.com/search/my_search/index.html, \nhttps://zzup.com/search/my_search/page-i.html, \nhttps://zzup.com/content/ABCDEFGHIJ==/Gallery_Name/ABC=/index.html")
 
 
 if __name__ == "__main__":
